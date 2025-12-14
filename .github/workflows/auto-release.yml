@@ -53,8 +53,11 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag -a ${{ steps.version.outputs.version }} -m "Release ${{ steps.version.outputs.name }}"
 
-          # 推送tag到远程仓库
+          # 推送tag到远程仓库，这会触发publish工作流
           git push origin ${{ steps.version.outputs.version }}
+
+          # 等待几秒钟确保GitHub有时间处理tag推送
+          sleep 10
 
           # 使用GitHub CLI创建release草稿
           gh release create ${{ steps.version.outputs.version }} \
