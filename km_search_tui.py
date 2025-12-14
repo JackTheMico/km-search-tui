@@ -221,8 +221,9 @@ class KMSearchApp(App):
         
         # 显示结果
         if results:
-            for code, chinese in results:
-                table.add_row(code, chinese, key=code)
+            for index, (code, chinese) in enumerate(results):
+                # 使用索引确保每行都有唯一的 key
+                table.add_row(code, chinese, key=f"{code}_{index}")
             status.update(f"找到 {len(results)} 条结果（搜索{search_type}: {query}）| 按 ↑↓ 浏览 | 按 Q 退出")
         else:
             status.update(f"未找到结果（搜索{search_type}: {query}）| 按 Q 退出")
