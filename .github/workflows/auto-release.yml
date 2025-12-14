@@ -56,12 +56,12 @@ jobs:
           # 推送tag到远程仓库
           git push origin ${{ steps.version.outputs.version }}
 
-          # 使用GitHub CLI创建release并立即发布
+          # 使用GitHub CLI创建release草稿
           gh release create ${{ steps.version.outputs.version }} \
             --title "${{ steps.version.outputs.name }}" \
             --notes "自动创建的发布版本 ${{ steps.version.outputs.version }}
 
             更改内容请查看提交历史。" \
-            --latest
+            --draft
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
