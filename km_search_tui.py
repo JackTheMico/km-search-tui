@@ -105,31 +105,72 @@ class KMSearchApp(App):
     
     CSS = """
     Screen {
-        background: $surface;
+        background: #282a36;
     }
     
     #input_container {
         margin: 1;
         padding: 1;
-        border: solid $primary;
+        border: solid #bd93f9;
     }
     
     #input_label {
-        width: 20;
+        width: 18;
+        height: 3;
         text-align: right;
-        margin-right: 1;
+        margin-right: 2;
+        padding: 0 1;
+        content-align: right middle;
+        color: #bd93f9;
+        text-style: bold;
+        border: solid #ff79c6;
+        background: #44475a;
     }
     
+    #search_input {
+        height: 3;
+        background: #44475a;
+        color: #f8f8f2;
+        border: solid #8be9fd;
+    }
+    
+    #search_input:focus {
+        border: solid #50fa7b;
+    }
     
     #result_table {
         margin: 1;
-        border: solid $primary;
+        border: solid #bd93f9;
+        background: #282a36;
+    }
+    
+    #result_table > .datatable--cursor {
+        background: #44475a;
+    }
+    
+    #result_table > .datatable--header {
+        background: #44475a;
+        color: #bd93f9;
+        text-style: bold;
     }
     
     #status_label {
         margin: 1;
         padding: 1;
-        background: $panel;
+        background: #44475a;
+        color: #f8f8f2;
+        border: solid #6272a4;
+    }
+    
+    Header {
+        background: #44475a;
+        color: #bd93f9;
+        text-style: bold;
+    }
+    
+    Footer {
+        background: #44475a;
+        color: #8be9fd;
     }
     """
     
