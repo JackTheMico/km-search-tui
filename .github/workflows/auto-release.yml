@@ -1,0 +1,54 @@
+name: Auto Create Release
+
+on:
+  push:
+    branches: [ release ]
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # 需要写入权限来创建release
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 获取完整历史，以便获取上一个release标签
+
+      - name: Get version from tag or generate one
+        id: version
+        run: |
+          # 获取最新的release标签
+          LATEST_TAG=$(git describe --tags --match="v*" --abbrev=0 2>/dev/null || echo "v0.0.0")
+          echo "Latest tag: $LATEST_TAG"
+
+          # 提取版本号并增加
+          VERSION=${LATEST_TAG#v}
+          IFS='.' read -ra VERSION_PARTS <<< "$VERSION"
+          MAJOR=${VERSION_PARTS[0]}
+          MINOR=${VERSION_PARTS[1]}
+          PATCH=${VERSION_PARTS[2]}
+
+          # 增加补丁版本号
+          PATCH=$((PATCH + 1))
+          NEW_VERSION="$MAJOR.$MINOR.$PATCH"
+
+          # 设置输出
+          echo "version=v$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "name=Release $NEW_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          release_name: ${{ steps.version.outputs.name }}
+          draft: false
+          prerelease: false
+          body: |
+            自动创建的发布版本 ${{ steps.version.outputs.version }}
+
+            更改内容请查看提交历史。
