@@ -135,12 +135,18 @@ class KMSearchApp(App):
     /* 搜索输入框样式 */
     #search_input {
         height: 3;
-        border: solid $accent;
+        border-left: solid $accent;
+        border-top: solid $accent;
+        border-bottom: solid $accent;
+        border-right: none;
         background: $surface;
     }
 
     #search_input:focus {
-        border: solid $accent;
+        border-left: solid $accent;
+        border-top: solid $accent;
+        border-bottom: solid $accent;
+        border-right: none;
         background: $surface-lighten-1;
     }
 
@@ -171,8 +177,13 @@ class KMSearchApp(App):
     }
 
     /* 历史表格样式 */
+    #history_container {
+        height: 85%;
+    }
+
     #history_table {
-        margin: 1;
+        margin: 0;
+        height: 85%;
         background: $surface;
     }
 
@@ -208,14 +219,34 @@ class KMSearchApp(App):
 
     #history_status_label {
         margin: 1;
-        padding: 1;
+        padding: 0 1;
         background: $surface;
         color: $text;
         text-align: center;
         border-top: solid $primary;
+        border-left: solid $accent;
+        border-right: solid $accent;
+        border-bottom: solid $accent;
     }
 
-    
+    #export_button {
+        margin: 1;
+        padding: 0 1;
+        background: $surface;
+        color: $text;
+        text-align: center;
+        border-top: solid $primary;
+        border-left: solid $accent;
+        border-right: solid $accent;
+        border-bottom: solid $accent;
+    }
+
+
+    /* 状态容器样式 */
+    #status_container {
+        height: 15%;
+    }
+
     /* 标签页容器样式 */
     TabbedContent {
         height: 100%;
@@ -223,7 +254,7 @@ class KMSearchApp(App):
     }
 
     TabPane {
-        padding: 1;
+        padding: 0;
         background: $background;
     }
 
@@ -270,6 +301,7 @@ class KMSearchApp(App):
         Binding("ctrl+c", "quit", "退出"),
         Binding("f1", "focus_tab('search')", "查询页"),
         Binding("f2", "focus_tab('history')", "历史页"),
+        Binding("e", "export_history", "导出历史"),
     ]
 
     def __init__(self, dict_file: str):
@@ -358,17 +390,29 @@ class KMSearchApp(App):
             print(f"记录查询历史失败: {e}")
 
     def load_search_history(self) -> None:
-        """加载并显示查询历史"""
+        """加载并显示查询历史（分页）"""
         import json
 
         try:
-            # 查询历史记录，按查询次数倒序排列
-            result = self.history_conn.sql("""
+            # 获取当前页码和每页记录数
+            current_page = getattr(self, '_current_history_page', 1)
+            page_size = 30
+
+            # 查询总记录数
+            count_result = self.history_conn.sql("SELECT COUNT(*) FROM search_history")
+            total_records = count_result.fetchone()[0]
+            total_pages = (total_records + page_size - 1) // page_size
+
+            # 计算偏移量
+            offset = (current_page - 1) * page_size
+
+            # 查询当前页的历史记录
+            result = self.history_conn.sql(f"""
                 SELECT query, query_type, search_count, result_codes,
                        strftime(last_search_time, '%Y-%m-%d %H:%M:%S') as formatted_time
                 FROM search_history
                 ORDER BY search_count DESC, last_search_time DESC
-                LIMIT 100
+                LIMIT {page_size} OFFSET {offset}
             """)
 
             # 更新历史记录表格
@@ -394,11 +438,18 @@ class KMSearchApp(App):
 
                     history_table.add_row(query, codes_str, query_type, str(count), time)
 
-                history_status = self.query_one("#history_status_label", Label)
-                history_status.update(f"查询历史| F1 切换到查询页 | Backspace 删除记录")
+                # 更新状态，显示分页信息
+                start_record = offset + 1
+                end_record = min(offset + page_size, total_records)
+                if total_pages > 1:
+                    history_status = self.query_one("#history_status_label", Label)
+                    history_status.update(f"查询历史 {start_record}-{end_record}/{total_records} (第{current_page}/{total_pages}页) | F1 切换到查询页 | Backspace 删除记录 | ← → 翻页")
+                else:
+                    history_status = self.query_one("#history_status_label", Label)
+                    history_status.update(f"查询历史 (共{total_records}条) | F1 切换到查询页 | Backspace 删除记录 | ← → 翻页")
             else:
                 history_status = self.query_one("#history_status_label", Label)
-                history_status.update("暂无查询历史 | F1 切换到查询页 | Backspace 删除记录")
+                history_status.update("暂无查询历史 | F1 切换到查询页 | Backspace 删除记录 | ← → 翻页")
         except Exception as e:
             history_status = self.query_one("#history_status_label", Label)
             history_status.update(f"加载查询历史失败: {e}")
@@ -409,6 +460,42 @@ class KMSearchApp(App):
         if event.key == "backspace" or event.key == "delete":
             # 调用删除功能
             self.delete_record_direct()
+            return
+
+        # 处理翻页键（左右方向键）
+        if event.key == "left":
+            # 上一页
+            try:
+                current_page = getattr(self, '_current_history_page', 1)
+                if current_page > 1:
+                    self._current_history_page = current_page - 1
+                    self.load_search_history()
+                    # 聚焦到历史表格
+                    history_table = self.query_one("#history_table", DataTable)
+                    self.set_focus(history_table)
+            except Exception as e:
+                history_status = self.query_one("#history_status_label", Label)
+                history_status.update(f"翻页失败: {e} | ← → 翻页")
+            return
+
+        if event.key == "right":
+            # 下一页
+            try:
+                current_page = getattr(self, '_current_history_page', 1)
+                # 查询总页数
+                count_result = self.history_conn.sql("SELECT COUNT(*) FROM search_history")
+                total_records = count_result.fetchone()[0]
+                total_pages = (total_records + 29) // 30  # 每页30条（因为前面已修改为30）
+
+                if current_page < total_pages:
+                    self._current_history_page = current_page + 1
+                    self.load_search_history()
+                    # 聚焦到历史表格
+                    history_table = self.query_one("#history_table", DataTable)
+                    self.set_focus(history_table)
+            except Exception as e:
+                history_status = self.query_one("#history_status_label", Label)
+                history_status.update(f"翻页失败: {e} | ← → 翻页")
             return
 
         # 处理确认删除的按键
@@ -433,18 +520,18 @@ class KMSearchApp(App):
 
                     # 更新状态
                     history_status = self.query_one("#history_status_label", Label)
-                    history_status.update(f"已删除记录 | F2 查看历史 | Backspace 删除记录")
+                    history_status.update(f"已删除记录 | F2 查看历史 | Backspace 删除记录 | ← → 翻页")
 
                 except Exception as e:
                     history_status = self.query_one("#history_status_label", Label)
-                    history_status.update(f"删除记录失败: {e}")
+                    history_status.update(f"删除记录失败: {e} | ← → 翻页")
 
             elif event.key == 'n' or event.key == 'N':
                 # 取消删除
                 if hasattr(self, '_pending_deletion'):
                     delattr(self, '_pending_deletion')
                 history_status = self.query_one("#history_status_label", Label)
-                history_status.update(f"已取消删除 | F2 查看历史 | Backspace 删除记录")
+                history_status.update(f"已取消删除 | F2 查看历史 | Backspace 删除记录 | ← → 翻页")
 
     def delete_record_direct(self) -> None:
         """直接触发删除选中的历史记录（不通过binding）"""
@@ -453,7 +540,7 @@ class KMSearchApp(App):
             tabbed_content = self.query_one(TabbedContent)
             if tabbed_content.active != "history_tab":
                 history_status = self.query_one("#history_status_label", Label)
-                history_status.update("请先切换到历史页 | F2 切换到历史页")
+                history_status.update("请先切换到历史页 | F2 切换到历史页 | ← → 翻页")
                 return
 
             # 获取历史记录表格
@@ -463,7 +550,7 @@ class KMSearchApp(App):
             cursor_row = history_table.cursor_row
             if cursor_row is None:
                 history_status = self.query_one("#history_status_label", Label)
-                history_status.update("请先选中要删除的记录 | Backspace 删除记录 | F2 查看历史")
+                history_status.update("请先选中要删除的记录 | Backspace 删除记录 | F2 查看历史 | ← → 翻页")
                 return
 
             # 获取选中行的数据
@@ -485,7 +572,7 @@ class KMSearchApp(App):
 
             # 显示确认提示
             history_status = self.query_one("#history_status_label", Label)
-            history_status.update(f"确认删除: '{query}' ({query_type})? 按 Y 确认删除，按 N 取消")
+            history_status.update(f"确认删除: '{query}' ({query_type})? 按 Y 确认删除，按 N 取消 | ← → 翻页")
 
         except Exception as e:
             history_status = self.query_one("#history_status_label", Label)
@@ -499,24 +586,22 @@ class KMSearchApp(App):
         with TabbedContent():
             with TabPane("查询", id="search_tab"):
                 with Container(id="input_container"):
-                    with Horizontal():
-                        yield Label("输入编码/中文:", id="input_label")
-                        yield Input(
-                            placeholder="输入编码（如：9W）或中文（如：物质）进行搜索...",
-                            id="search_input"
-                        )
-
-                yield DataTable(id="result_table")
-
-                yield Label("就绪 | F1 切换到查询页 | F2 切换到历史页", id="status_label")
-
+                    with Vertical():
+                        with Horizontal():
+                            yield Label("输入编码/中文:", id="input_label")
+                            yield Input(
+                                placeholder="输入编码（如：9W）或中文（如：物质）进行搜索...",
+                                id="search_input"
+                            )
+                        yield DataTable(id="result_table")
+                        yield Label("就绪 | F1 切换到查询页 | F2 切换到历史页", id="status_label")
             with TabPane("查询历史", id="history_tab"):
                 with Container():
-                    with Horizontal():
+                    with Vertical():
                         yield DataTable(id="history_table")
-                    with Horizontal():
-                        yield Label("F1 切换到查询页 | Backspace 删除记录 ", id="history_status_label")
-                        yield Button("导出历史记录", id="export_button")
+                        with Horizontal():
+                            yield Label("F1 切换到查询页 | Backspace 删除记录 ", id="history_status_label")
+                            yield Button("导出所有字词", id="export_button")
 
         yield Footer()
 
@@ -550,7 +635,7 @@ class KMSearchApp(App):
         try:
             count, load_time = self.code_dict.load()
             status = self.query_one("#status_label", Label)
-            status.update(f"词库加载完成！共 {count:,} 条记录，耗时 {load_time:.2f} 秒 | F2 查看历史 | Backspace 删除记录")
+            status.update(f"词库加载完成！共 {count:,} 条记录，耗时 {load_time:.2f} 秒 | F2 查看历史 | Backspace 删除记录 | ← → 翻页")
 
             # 词库加载完成后，聚焦到搜索输入框
             search_input = self.query_one("#search_input", Input)
@@ -667,35 +752,37 @@ class KMSearchApp(App):
             self.set_focus(history_table)
 
     def action_export_history(self) -> None:
-        """导出历史记录到txt文件"""
+        """导出DuckDB数据库中所有字词到txt文件"""
         try:
             # 检查是否在历史标签页
             tabbed_content = self.query_one(TabbedContent)
             if tabbed_content.active != "history_tab":
                 history_status = self.query_one("#history_status_label", Label)
-                history_status.update("请先切换到历史页进行导出 | F2 切换到历史页")
+                history_status.update("请先切换到历史页进行导出 | F2 切换到历史页 | ← → 翻页")
                 return
 
-            # 获取历史记录
-            history_table = self.query_one("#history_table", DataTable)
+            # 查询数据库中的所有唯一查询词
+            result = self.history_conn.sql("""
+                SELECT DISTINCT query
+                FROM search_history
+                ORDER BY query COLLATE NOCASE
+            """)
 
             # 收集所有查询词
             all_queries = set()
-            for row in range(history_table.row_count):
-                row_data = history_table.get_row_at(row)
-                if row_data and len(row_data) > 0:
-                    query = row_data[0]  # 查询词
-                    if query:
-                        all_queries.add(query)
+            for row in result.fetchall():
+                query = row[0]
+                if query:
+                    all_queries.add(query)
 
             if not all_queries:
                 history_status = self.query_one("#history_status_label", Label)
-                history_status.update("没有可导出的历史记录")
+                history_status.update("数据库中没有可导出的字词 | ← → 翻页")
                 return
 
             # 生成文件名
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"km_search_history_{timestamp}.txt"
+            filename = f"km_search_all_words_{timestamp}.txt"
 
             # 写入文件
             with open(filename, 'w', encoding='utf-8') as f:
@@ -703,7 +790,7 @@ class KMSearchApp(App):
                 f.write("，".join(sorted(all_queries)))
 
             history_status = self.query_one("#history_status_label", Label)
-            history_status.update(f"历史记录已导出到: {filename}")
+            history_status.update(f"数据库中所有字词已导出到: {filename}")
 
         except Exception as e:
             history_status = self.query_one("#history_status_label", Label)
