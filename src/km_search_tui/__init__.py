@@ -215,6 +215,7 @@ class KMSearchApp(App):
         border-top: solid $primary;
     }
 
+    
     /* 标签页容器样式 */
     TabbedContent {
         height: 100%;
@@ -394,10 +395,10 @@ class KMSearchApp(App):
                     history_table.add_row(query, codes_str, query_type, str(count), time)
 
                 history_status = self.query_one("#history_status_label", Label)
-                history_status.update(f"查询历史（显示前100条，按查询次数排序）| F1 切换到查询页 | Backspace 删除记录 | 按 Q 退出")
+                history_status.update(f"查询历史| F1 切换到查询页 | Backspace 删除记录")
             else:
                 history_status = self.query_one("#history_status_label", Label)
-                history_status.update("暂无查询历史 | F1 切换到查询页 | Backspace 删除记录 | 按 Q 退出")
+                history_status.update("暂无查询历史 | F1 切换到查询页 | Backspace 删除记录")
         except Exception as e:
             history_status = self.query_one("#history_status_label", Label)
             history_status.update(f"加载查询历史失败: {e}")
@@ -432,7 +433,7 @@ class KMSearchApp(App):
 
                     # 更新状态
                     history_status = self.query_one("#history_status_label", Label)
-                    history_status.update(f"已删除记录 | F2 查看历史 | Backspace 删除记录 | 按 Q 退出")
+                    history_status.update(f"已删除记录 | F2 查看历史 | Backspace 删除记录")
 
                 except Exception as e:
                     history_status = self.query_one("#history_status_label", Label)
@@ -443,7 +444,7 @@ class KMSearchApp(App):
                 if hasattr(self, '_pending_deletion'):
                     delattr(self, '_pending_deletion')
                 history_status = self.query_one("#history_status_label", Label)
-                history_status.update(f"已取消删除 | F2 查看历史 | Backspace 删除记录 | 按 Q 退出")
+                history_status.update(f"已取消删除 | F2 查看历史 | Backspace 删除记录")
 
     def delete_record_direct(self) -> None:
         """直接触发删除选中的历史记录（不通过binding）"""
@@ -462,7 +463,7 @@ class KMSearchApp(App):
             cursor_row = history_table.cursor_row
             if cursor_row is None:
                 history_status = self.query_one("#history_status_label", Label)
-                history_status.update("请先选中要删除的记录 | Backspace 删除记录 | F2 查看历史 | 按 Q 退出")
+                history_status.update("请先选中要删除的记录 | Backspace 删除记录 | F2 查看历史")
                 return
 
             # 获取选中行的数据
@@ -507,11 +508,15 @@ class KMSearchApp(App):
 
                 yield DataTable(id="result_table")
 
-                yield Label("就绪 | F1 切换到查询页 | F2 切换到历史页 | 按 Q 退出", id="status_label")
+                yield Label("就绪 | F1 切换到查询页 | F2 切换到历史页", id="status_label")
 
             with TabPane("查询历史", id="history_tab"):
-                yield DataTable(id="history_table")
-                yield Label("查询历史 | F1 切换到查询页 | F2 切换到历史页 | 按 Q 退出", id="history_status_label")
+                with Container():
+                    with Horizontal():
+                        yield DataTable(id="history_table")
+                    with Horizontal():
+                        yield Label("F1 切换到查询页 | Backspace 删除记录 ", id="history_status_label")
+                        yield Button("导出历史记录", id="export_button")
 
         yield Footer()
 
@@ -545,7 +550,7 @@ class KMSearchApp(App):
         try:
             count, load_time = self.code_dict.load()
             status = self.query_one("#status_label", Label)
-            status.update(f"词库加载完成！共 {count:,} 条记录，耗时 {load_time:.2f} 秒 | F2 查看历史 | Backspace 删除记录 | 按 Q 退出")
+            status.update(f"词库加载完成！共 {count:,} 条记录，耗时 {load_time:.2f} 秒 | F2 查看历史 | Backspace 删除记录")
 
             # 词库加载完成后，聚焦到搜索输入框
             search_input = self.query_one("#search_input", Input)
@@ -618,9 +623,9 @@ class KMSearchApp(App):
             for index, (code, chinese) in enumerate(results):
                 # 使用索引确保每行都有唯一的 key
                 table.add_row(code, chinese, key=f"{code}_{index}")
-            status.update(f"找到 {len(results)} 条结果（搜索{search_type}: {query}）| 按 ↑↓ 浏览 | F2 查看历史 | 按 Q 退出")
+            status.update(f"找到 {len(results)} 条结果（搜索{search_type}: {query}）| 按 ↑↓ 浏览 | F2 查看历史")
         else:
-            status.update(f"未找到结果（搜索{search_type}: {query}）| F2 查看历史 | 按 Q 退出")
+            status.update(f"未找到结果（搜索{search_type}: {query}）| F2 查看历史")
 
         # 重新聚焦到输入框，以便继续输入
         search_input = self.query_one("#search_input", Input)
@@ -631,6 +636,11 @@ class KMSearchApp(App):
         """输入内容改变时实时搜索（可选，如果文件很大可能会慢）"""
         # 可以在这里实现实时搜索，但为了性能，我们只在提交时搜索
         pass
+
+    @on(Button.Pressed, "#export_button")
+    def on_export_button_pressed(self, event: Button.Pressed) -> None:
+        """处理导出按钮点击事件"""
+        self.action_export_history()
 
     def action_quit(self) -> None:
         """退出应用"""
@@ -655,6 +665,49 @@ class KMSearchApp(App):
             history_table = self.query_one("#history_table", DataTable)
             # 使用set_focus方法聚焦到表格
             self.set_focus(history_table)
+
+    def action_export_history(self) -> None:
+        """导出历史记录到txt文件"""
+        try:
+            # 检查是否在历史标签页
+            tabbed_content = self.query_one(TabbedContent)
+            if tabbed_content.active != "history_tab":
+                history_status = self.query_one("#history_status_label", Label)
+                history_status.update("请先切换到历史页进行导出 | F2 切换到历史页")
+                return
+
+            # 获取历史记录
+            history_table = self.query_one("#history_table", DataTable)
+
+            # 收集所有查询词
+            all_queries = set()
+            for row in range(history_table.row_count):
+                row_data = history_table.get_row_at(row)
+                if row_data and len(row_data) > 0:
+                    query = row_data[0]  # 查询词
+                    if query:
+                        all_queries.add(query)
+
+            if not all_queries:
+                history_status = self.query_one("#history_status_label", Label)
+                history_status.update("没有可导出的历史记录")
+                return
+
+            # 生成文件名
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"km_search_history_{timestamp}.txt"
+
+            # 写入文件
+            with open(filename, 'w', encoding='utf-8') as f:
+                # 使用中文逗号作为分隔符
+                f.write("，".join(sorted(all_queries)))
+
+            history_status = self.query_one("#history_status_label", Label)
+            history_status.update(f"历史记录已导出到: {filename}")
+
+        except Exception as e:
+            history_status = self.query_one("#history_status_label", Label)
+            history_status.update(f"导出失败: {e}")
 
 
 def main():
