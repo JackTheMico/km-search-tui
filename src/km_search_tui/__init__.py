@@ -178,12 +178,12 @@ class KMSearchApp(App):
 
     /* 历史表格样式 */
     #history_container {
-        height: 85%;
+        height: 80%;
     }
 
     #history_table {
         margin: 0;
-        height: 85%;
+        height: 80%;
         background: $surface;
     }
 
@@ -241,6 +241,20 @@ class KMSearchApp(App):
         border-bottom: solid $accent;
     }
 
+
+    #history_search_input {
+        width: 98%;
+        background: $surface;
+        color: $text;
+        border: solid $accent;
+        border-right: none;
+        padding: 0 1;
+    }
+
+    #history_search_input:focus {
+        background: $surface-lighten-1;
+        color: $text;
+    }
 
     /* 状态容器样式 */
     #status_container {
@@ -349,6 +363,16 @@ class KMSearchApp(App):
         except:
             pass  # 索引可能已存在
 
+    def filter_history_search(self, search_term: str) -> None:
+        """过滤历史记录搜索"""
+        import json
+
+        # 保存搜索词到实例变量
+        self._history_search_term = search_term
+
+        # 重新加载历史记录（会使用搜索词进行过滤）
+        self.load_search_history()
+
     def record_search_history(self, query: str, query_type: str, results: List[Tuple[str, str]] = None) -> None:
         """记录查询历史"""
         import json
@@ -389,8 +413,62 @@ class KMSearchApp(App):
             # 记录错误但不中断主流程
             print(f"记录查询历史失败: {e}")
 
+    def search_history_records(self, search_term: str) -> None:
+        """搜索历史记录"""
+        import json
+
+        if not search_term:
+            # 如果搜索框为空，加载所有记录
+            self.load_search_history()
+            return
+
+        try:
+            # 执行搜索查询
+            result = self.history_conn.execute("""
+                SELECT query, query_type, search_count, result_codes,
+                       strftime(last_search_time, '%Y-%m-%d %H:%M:%S') as formatted_time
+                FROM search_history
+                WHERE query LIKE ?
+                ORDER BY search_count DESC, last_search_time DESC
+                LIMIT 100
+            """, [f"%{search_term}%"])
+
+            # 更新历史记录表格
+            history_table = self.query_one("#history_table", DataTable)
+            history_table.clear()
+
+            # 显示搜索结果
+            rows = result.fetchall()
+            if rows:
+                for row in rows:
+                    query, query_type, count, result_codes, time = row
+
+                    # 解析编码JSON数据
+                    codes_str = ""
+                    if result_codes:
+                        try:
+                            codes = json.loads(result_codes)
+                            codes_str = " | ".join(codes[:5])
+                            if len(codes) > 5:
+                                codes_str += "..."
+                        except:
+                            codes_str = ""
+
+                    history_table.add_row(query, codes_str, query_type, str(count), time)
+
+                # 更新状态
+                history_status = self.query_one("#history_status_label", Label)
+                history_status.update(f"搜索结果: 找到 {len(rows)} 条包含 '{search_term}' 的记录 | 清空搜索框查看全部记录")
+            else:
+                history_status = self.query_one("#history_status_label", Label)
+                history_status.update(f"未找到包含 '{search_term}' 的记录 | 清空搜索框查看全部记录")
+
+        except Exception as e:
+            history_status = self.query_one("#history_status_label", Label)
+            history_status.update(f"搜索失败: {e}")
+
     def load_search_history(self) -> None:
-        """加载并显示查询历史（分页）"""
+        """加载并显示查询历史（分页，支持搜索过滤）"""
         import json
 
         try:
@@ -407,7 +485,7 @@ class KMSearchApp(App):
             offset = (current_page - 1) * page_size
 
             # 查询当前页的历史记录
-            result = self.history_conn.sql(f"""
+            result = self.history_conn.execute(f"""
                 SELECT query, query_type, search_count, result_codes,
                        strftime(last_search_time, '%Y-%m-%d %H:%M:%S') as formatted_time
                 FROM search_history
@@ -438,18 +516,15 @@ class KMSearchApp(App):
 
                     history_table.add_row(query, codes_str, query_type, str(count), time)
 
-                # 更新状态，显示分页信息
-                start_record = offset + 1
-                end_record = min(offset + page_size, total_records)
-                if total_pages > 1:
-                    history_status = self.query_one("#history_status_label", Label)
-                    history_status.update(f"查询历史 {start_record}-{end_record}/{total_records} (第{current_page}/{total_pages}页) | F1 切换到查询页 | Backspace 删除记录 | ← → 翻页")
-                else:
-                    history_status = self.query_one("#history_status_label", Label)
-                    history_status.update(f"查询历史 (共{total_records}条) | F1 切换到查询页 | Backspace 删除记录 | ← → 翻页")
+            # 显示结果并更新状态
+            start_record = offset + 1
+            end_record = min(offset + page_size, total_records)
+            if total_pages > 1:
+                history_status = self.query_one("#history_status_label", Label)
+                history_status.update(f"查询历史 {start_record}-{end_record}/{total_records} (第{current_page}/{total_pages}页) | F1 切换到查询页 | Backspace 删除记录 | ← → 翻页")
             else:
                 history_status = self.query_one("#history_status_label", Label)
-                history_status.update("暂无查询历史 | F1 切换到查询页 | Backspace 删除记录 | ← → 翻页")
+                history_status.update(f"查询历史 (共{total_records}条) | F1 切换到查询页 | Backspace 删除记录 | ← → 翻页")
         except Exception as e:
             history_status = self.query_one("#history_status_label", Label)
             history_status.update(f"加载查询历史失败: {e}")
@@ -598,6 +673,10 @@ class KMSearchApp(App):
             with TabPane("查询历史", id="history_tab"):
                 with Container():
                     with Vertical():
+                        with Horizontal():
+                            yield Input(
+                                placeholder="输入字词搜索历史记录...",
+                                id="history_search_input")
                         yield DataTable(id="history_table")
                         with Horizontal():
                             yield Label("F1 切换到查询页 | Backspace 删除记录 ", id="history_status_label")
@@ -721,6 +800,12 @@ class KMSearchApp(App):
         """输入内容改变时实时搜索（可选，如果文件很大可能会慢）"""
         # 可以在这里实现实时搜索，但为了性能，我们只在提交时搜索
         pass
+
+    @on(Input.Submitted, "#history_search_input")
+    def on_history_search_submitted(self, event: Input.Submitted) -> None:
+        """处理历史页面搜索框提交事件"""
+        search_term = event.value.strip()
+        self.search_history_records(search_term)
 
     @on(Button.Pressed, "#export_button")
     def on_export_button_pressed(self, event: Button.Pressed) -> None:
