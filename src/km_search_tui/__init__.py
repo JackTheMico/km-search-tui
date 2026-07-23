@@ -6,17 +6,20 @@
 """
 
 from textual.app import App, ComposeResult
+from textual.screen import Screen
 from textual.containers import Container, Horizontal, Vertical
-from textual.widgets import Input, DataTable, Header, Footer, Label, TabbedContent, TabPane, Button
+from textual.widgets import Input, DataTable, Header, Footer, Label, TabbedContent, TabPane, Button, DirectoryTree
 from textual.binding import Binding
 from textual import on
 from textual import events
-import re
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Iterator
+from textual.worker import Worker
 import time
 import duckdb
+import json
 import os
+import re
 from datetime import datetime
 
 
@@ -103,6 +106,49 @@ class CodeDict:
 
         return results
 
+
+class DictFileTree(DirectoryTree):
+    """只显示 .shp 和 .txt 词库文件的目录树"""
+    def filter_paths(self, paths):
+        for path in paths:
+            if path.is_dir():
+                yield path
+            elif path.suffix.lower() in ('.shp', '.txt'):
+                yield path
+
+
+class DictPickerScreen(Screen):
+    """词库文件选择器屏幕"""
+    BINDINGS = [
+        Binding("escape", "dismiss(None)", "取消"),
+        Binding("backspace", "go_parent", "返回上级"),
+    ]
+
+    def compose(self) -> ComposeResult:
+        yield Header("选择词库文件")
+        yield DictFileTree(Path("./").resolve(), id="dict_tree")
+        yield Label("提示: 选择 .shp 或 .txt 词库文件（Esc 取消 | Backspace 返回上级）", id="picker_hint")
+
+    def on_mount(self) -> None:
+        self.query_one("#dict_tree", DictFileTree).focus()
+
+    def action_go_parent(self) -> None:
+        """返回上级目录"""
+        dict_tree = self.query_one("#dict_tree", DictFileTree)
+        current_path = dict_tree.path
+        if current_path != current_path.parent:
+            dict_tree.path = current_path.parent
+
+    @on(DirectoryTree.FileSelected, "#dict_tree")
+    def on_file_selected(self, event: DirectoryTree.FileSelected) -> None:
+        path = event.path
+        if path.suffix.lower() in ('.shp', '.txt'):
+            self.dismiss(path)
+
+    @on(DirectoryTree.DirectorySelected, "#dict_tree")
+    def on_directory_selected(self, event: DirectoryTree.DirectorySelected) -> None:
+        dict_tree = self.query_one("#dict_tree", DictFileTree)
+        dict_tree.path = event.path
 
 
 
@@ -315,6 +361,7 @@ class KMSearchApp(App):
         Binding("ctrl+c", "quit", "退出"),
         Binding("f1", "focus_tab('search')", "查询页"),
         Binding("f2", "focus_tab('history')", "历史页"),
+        Binding("f3", "select_dict", "选择词库"),
         Binding("e", "export_history", "导出历史"),
     ]
 
@@ -329,15 +376,7 @@ class KMSearchApp(App):
 
     def init_history_db(self) -> None:
         """初始化查询历史数据库"""
-        # 获取用户数据目录
-        if os.name == 'nt':  # Windows
-            data_dir = os.environ.get('APPDATA', '')
-            data_dir = os.path.join(data_dir, 'km-search-tui')
-        else:  # Unix-like
-            data_dir = os.path.join(os.path.expanduser('~'), '.local', 'share', 'km-search-tui')
-
-        # 确保目录存在
-        os.makedirs(data_dir, exist_ok=True)
+        data_dir = _get_data_dir()
 
         # 数据库文件路径
         self.history_db_path = os.path.join(data_dir, 'search_history.duckdb')
@@ -669,7 +708,9 @@ class KMSearchApp(App):
                                 id="search_input"
                             )
                         yield DataTable(id="result_table")
-                        yield Label("就绪 | F1 切换到查询页 | F2 切换到历史页", id="status_label")
+                        with Horizontal():
+                            yield Label("就绪 | F1 切换到查询页 | F2 切换到历史页 | F3 选择词库", id="status_label")
+                            yield Button("选择词库", id="dict_select_btn", variant="primary")
             with TabPane("查询历史", id="history_tab"):
                 with Container():
                     with Vertical():
@@ -714,7 +755,7 @@ class KMSearchApp(App):
         try:
             count, load_time = self.code_dict.load()
             status = self.query_one("#status_label", Label)
-            status.update(f"词库加载完成！共 {count:,} 条记录，耗时 {load_time:.2f} 秒 | F2 查看历史 | Backspace 删除记录 | ← → 翻页")
+            status.update(f"词库加载完成！共 {count:,} 条记录，耗时 {load_time:.2f} 秒 | F2 查看历史 | F3 选择词库")
 
             # 词库加载完成后，聚焦到搜索输入框
             search_input = self.query_one("#search_input", Input)
@@ -726,6 +767,23 @@ class KMSearchApp(App):
         except Exception as e:
             status = self.query_one("#status_label", Label)
             status.update(f"错误: {e}")
+
+    def action_select_dict(self) -> None:
+        """打开词库文件选择器"""
+        def on_dict_selected(path_or_none):
+            if path_or_none is None:
+                return
+            self.dict_file = str(path_or_none)
+            _save_dict_config(self.dict_file)
+            self.code_dict = CodeDict(self.dict_file)
+            # 清空搜索结果
+            self.query_one("#result_table", DataTable).clear()
+            self.load_dictionary()
+        self.push_screen(DictPickerScreen(), on_dict_selected)
+
+    @on(Button.Pressed, "#dict_select_btn")
+    def on_dict_select_button(self, event: Button.Pressed) -> None:
+        self.action_select_dict()
 
     def _open_command_palette(self) -> None:
         """打开 Command Palette"""
@@ -882,20 +940,63 @@ class KMSearchApp(App):
             history_status.update(f"导出失败: {e}")
 
 
+def _get_data_dir() -> str:
+    """获取跨平台用户数据目录"""
+    if os.name == 'nt':  # Windows
+        data_dir = os.environ.get('APPDATA', '')
+        data_dir = os.path.join(data_dir, 'km-search-tui')
+    else:  # Unix-like
+        data_dir = os.path.join(os.path.expanduser('~'), '.local', 'share', 'km-search-tui')
+    os.makedirs(data_dir, exist_ok=True)
+    return data_dir
+
+
+DICT_CONFIG_FILE = "dict_config.json"
+
+
+def _save_dict_config(dict_file: str) -> None:
+    """保存用户选择的词库文件路径"""
+    config_path = os.path.join(_get_data_dir(), DICT_CONFIG_FILE)
+    try:
+        with open(config_path, 'w', encoding='utf-8') as f:
+            json.dump({"dict_file": dict_file}, f)
+    except Exception:
+        pass  # 持久化失败不影响主流程
+
+
+def _load_dict_config() -> str | None:
+    """读取上次保存的词库文件路径，文件已不存在时返回 None"""
+    config_path = os.path.join(_get_data_dir(), DICT_CONFIG_FILE)
+    try:
+        if os.path.exists(config_path):
+            with open(config_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            path = data.get("dict_file", "")
+            if path and os.path.exists(path):
+                return path
+    except Exception:
+        pass
+    return None
+
 def main():
     """主函数"""
     import sys
     import os
 
-    # 获取词库文件路径
-    # 如果是 PyInstaller 打包后的程序，从临时目录读取
-    if getattr(sys, 'frozen', False):
-        # 打包后的可执行文件
-        base_path = sys._MEIPASS
-        dict_file = os.path.join(base_path, 'MasterDit.shp')
+    # 检查持久化的用户词库文件路径
+    saved_dict = _load_dict_config()
+    if saved_dict:
+        dict_file = saved_dict
     else:
-        # 开发环境，从当前目录读取
-        dict_file = "MasterDit.shp"
+        # 获取词库文件路径
+        # 如果是 PyInstaller 打包后的程序，从临时目录读取
+        if getattr(sys, 'frozen', False):
+            # 打包后的可执行文件
+            base_path = sys._MEIPASS
+            dict_file = os.path.join(base_path, 'MasterDit.shp')
+        else:
+            # 开发环境，从当前目录读取
+            dict_file = "MasterDit.shp"
 
     # 如果临时目录没有，尝试从可执行文件所在目录读取
     if not Path(dict_file).exists():
