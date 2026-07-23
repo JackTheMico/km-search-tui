@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "km-search-tui"
-version = "0.1.0"
+version = "0.1.1"
 description = "空明码查询工具 - 使用 Textual 开发的 TUI 应用，可以查询编码和中文的对应关系"
 readme = "README.md"
 requires-python = ">=3.14"
